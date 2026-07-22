@@ -16,16 +16,31 @@ scms:
 
 sources:
   trivy-release:
-    name: "Get Trivy latest release"
-    kind: "githubrelease"
+    name: "Get Trivy latest release from Registry"
+    kind: "dockerimage"
     spec:
-      owner: "aquasecurity"
-      repository: "trivy"
-      token: "{{ requiredEnv .github.token }}"
+      image: "ghcr.io/aquasecurity/trivy"
       versionfilter:
-        kind: "latest"
-    transformers:
-      - trimprefix: "v"
+        kind: "semver"
+        pattern: ">0.0.0"
+
+  trivy-sha-amd64:
+    name: "Get Trivy AMD64 SHA256"
+    kind: "shell"
+    dependson:
+      - "trivy-release"
+    spec:
+      command: >-
+        curl -sL "https://github.com/aquasecurity/trivy/releases/download/v{{ source `trivy-release` }}/trivy_{{ source `trivy-release` }}_checksums.txt" | grep "Linux-64bit.tar.gz" | awk '{print $1}'
+
+  trivy-sha-arm64:
+    name: "Get Trivy ARM64 SHA256"
+    kind: "shell"
+    dependson:
+      - "trivy-release"
+    spec:
+      command: >-
+        curl -sL "https://github.com/aquasecurity/trivy/releases/download/v{{ source `trivy-release` }}/trivy_{{ source `trivy-release` }}_checksums.txt" | grep "Linux-ARM64.tar.gz" | awk '{print $1}'
 
 conditions:
   trivy-version:
@@ -51,6 +66,28 @@ targets:
       matchpattern: 'TRIVY_VERSION=\d+\.\d+\.\d+'
       replacepattern: 'TRIVY_VERSION={{ source `trivy-release` }}'
 
+  trivy-sha-amd64:
+    name: "Update Trivy AMD64 SHA256 in Dockerfile"
+    kind: "file"
+    scmid: "image-build-base"
+    disablesourceinput: true
+    spec:
+      files:
+        - "Dockerfile"
+      matchpattern: 'Linux-64bit\.tar\.gz";\s*\\\s*TRIVY_SHA256="[a-fA-F0-9]{64}"'
+      replacepattern: "Linux-64bit.tar.gz\"; \\\n    TRIVY_SHA256=\"{{ source `trivy-sha-amd64` }}\""
+
+  trivy-sha-arm64:
+    name: "Update Trivy ARM64 SHA256 in Dockerfile"
+    kind: "file"
+    scmid: "image-build-base"
+    disablesourceinput: true
+    spec:
+      files:
+        - "Dockerfile"
+      matchpattern: 'Linux-ARM64\.tar\.gz";\s*\\\s*TRIVY_SHA256="[a-fA-F0-9]{64}"'
+      replacepattern: "Linux-ARM64.tar.gz\"; \\\n    TRIVY_SHA256=\"{{ source `trivy-sha-arm64` }}\""
+
 actions:
   github:
     title: "Bump Trivy version"
@@ -58,7 +95,7 @@ actions:
     scmid: "image-build-base"
     spec:
       merge:
-        stragety: auto
+        strategy: auto
         mergemethod: squash
       draft: false
       parent: false
